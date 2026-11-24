@@ -3,6 +3,7 @@ package org.codehaus.jackson.map.deser.std;
 import java.io.IOException;
 import java.util.*;
 
+import org.codehaus.jackson.JsonParseException;
 import org.codehaus.jackson.JsonProcessingException;
 import org.codehaus.jackson.JsonParser;
 import org.codehaus.jackson.JsonToken;
@@ -28,6 +29,8 @@ import org.codehaus.jackson.map.util.ObjectBuffer;
 public class UntypedObjectDeserializer
     extends StdDeserializer<Object>
 {
+    private static final int MAX_DEPTH = 1000;
+
     private final static Object[] NO_OBJECTS = new Object[0];
     
     public UntypedObjectDeserializer() { super(Object.class); }
@@ -42,17 +45,32 @@ public class UntypedObjectDeserializer
     public Object deserialize(JsonParser jp, DeserializationContext ctxt)
         throws IOException, JsonProcessingException
     {
+        return _deserialize(jp, ctxt, 0);
+    }
+
+    private Object _deserialize(JsonParser jp, DeserializationContext ctxt, int depth)
+        throws IOException, JsonProcessingException
+    {
         switch (jp.getCurrentToken()) {
         case START_OBJECT:
-            return mapObject(jp, ctxt);
+            if (depth > MAX_DEPTH) {
+                throw new JsonParseException("JSON is too deeply nested.", jp.getCurrentLocation());
+            }
+            return mapObject(jp, ctxt, depth);
         case END_OBJECT: // invalid
             break;
         case START_ARRAY:
-            return mapArray(jp, ctxt);
+            if (depth > MAX_DEPTH) {
+                throw new JsonParseException("JSON is too deeply nested.", jp.getCurrentLocation());
+            }
+            return mapArray(jp, ctxt, depth);
         case END_ARRAY: // invalid
             break;
         case FIELD_NAME:
-            return mapObject(jp, ctxt);
+            if (depth > MAX_DEPTH) {
+                throw new JsonParseException("JSON is too deeply nested.", jp.getCurrentLocation());
+            }
+            return mapObject(jp, ctxt, depth);
         case VALUE_EMBEDDED_OBJECT:
             return jp.getEmbeddedObject();
         case VALUE_STRING:
@@ -150,8 +168,14 @@ public class UntypedObjectDeserializer
     protected Object mapArray(JsonParser jp, DeserializationContext ctxt)
         throws IOException, JsonProcessingException
     {
+        return mapArray(jp, ctxt, 0);
+    }
+
+    protected Object mapArray(JsonParser jp, DeserializationContext ctxt, int depth)
+        throws IOException, JsonProcessingException
+    {
         if (ctxt.isEnabled(DeserializationConfig.Feature.USE_JAVA_ARRAY_FOR_JSON_ARRAY)) {
-            return mapArrayToArray(jp, ctxt);
+            return mapArrayToArray(jp, ctxt, depth);
         }
         // Minor optimization to handle small lists (default size for ArrayList is 10)
         if (jp.nextToken()  == JsonToken.END_ARRAY) {
@@ -162,7 +186,7 @@ public class UntypedObjectDeserializer
         int ptr = 0;
         int totalSize = 0;
         do {
-            Object value = deserialize(jp, ctxt);
+            Object value = _deserialize(jp, ctxt, depth + 1);
             ++totalSize;
             if (ptr >= values.length) {
                 values = buffer.appendCompletedChunk(values);
@@ -182,6 +206,12 @@ public class UntypedObjectDeserializer
     protected Object mapObject(JsonParser jp, DeserializationContext ctxt)
         throws IOException, JsonProcessingException
     {
+        return mapObject(jp, ctxt, 0);
+    }
+
+    protected Object mapObject(JsonParser jp, DeserializationContext ctxt, int depth)
+        throws IOException, JsonProcessingException
+    {
         JsonToken t = jp.getCurrentToken();
         if (t == JsonToken.START_OBJECT) {
             t = jp.nextToken();
@@ -193,7 +223,7 @@ public class UntypedObjectDeserializer
         }
         String field1 = jp.getText();
         jp.nextToken();
-        Object value1 = deserialize(jp, ctxt);
+        Object value1 = _deserialize(jp, ctxt, depth + 1);
         if (jp.nextToken() != JsonToken.FIELD_NAME) { // single entry; but we want modifiable
             LinkedHashMap<String, Object> result = new LinkedHashMap<String, Object>(4);
             result.put(field1, value1);
@@ -201,7 +231,7 @@ public class UntypedObjectDeserializer
         }
         String field2 = jp.getText();
         jp.nextToken();
-        Object value2 = deserialize(jp, ctxt);
+        Object value2 = _deserialize(jp, ctxt, depth + 1);
         if (jp.nextToken() != JsonToken.FIELD_NAME) {
             LinkedHashMap<String, Object> result = new LinkedHashMap<String, Object>(4);
             result.put(field1, value1);
@@ -215,7 +245,7 @@ public class UntypedObjectDeserializer
         do {
             String fieldName = jp.getText();
             jp.nextToken();
-            result.put(fieldName, deserialize(jp, ctxt));
+            result.put(fieldName, _deserialize(jp, ctxt, depth + 1));
         } while (jp.nextToken() != JsonToken.END_OBJECT);
         return result;
     }
@@ -228,6 +258,12 @@ public class UntypedObjectDeserializer
     protected Object[] mapArrayToArray(JsonParser jp, DeserializationContext ctxt)
         throws IOException, JsonProcessingException
     {
+        return mapArrayToArray(jp, ctxt, 0);
+    }
+
+    protected Object[] mapArrayToArray(JsonParser jp, DeserializationContext ctxt, int depth)
+        throws IOException, JsonProcessingException
+    {
         // Minor optimization to handle small lists (default size for ArrayList is 10)
         if (jp.nextToken()  == JsonToken.END_ARRAY) {
             return NO_OBJECTS;
@@ -236,7 +272,7 @@ public class UntypedObjectDeserializer
         Object[] values = buffer.resetAndStart();
         int ptr = 0;
         do {
-            Object value = deserialize(jp, ctxt);
+            Object value = _deserialize(jp, ctxt, depth + 1);
             if (ptr >= values.length) {
                 values = buffer.appendCompletedChunk(values);
                 ptr = 0;
